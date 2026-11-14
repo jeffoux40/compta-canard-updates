@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Compta Canard - application locale. Les donnees restent dans %LOCALAPPDATA%."""
-import os, sqlite3, shutil, csv, sys, hashlib, re, json, urllib.request, subprocess, ssl
+import os, sqlite3, shutil, csv, sys, hashlib, re, json, urllib.request, subprocess, ssl, webbrowser
 try:
     import certifi
 except ImportError:
@@ -11,7 +11,7 @@ import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 
 APP_NAME = "Compta Canard"
-VERSION = "2.1.3"
+VERSION = "2.2.0"
 BASE = Path(os.environ.get("LOCALAPPDATA", Path.home())) / "ComptaCanard"
 DB = BASE / "compta_canard.db"
 DOCS = BASE / "documents"
@@ -206,6 +206,7 @@ class App(tk.Tk):
         ttk.Button(actions,text="📥 Importer des factures",command=self.import_files).pack(side="left")
         ttk.Button(actions,text="🔗 Connecter Outlook",command=self.connect_outlook).pack(side="left",padx=7)
         ttk.Button(actions,text="📨 Récupérer mes factures",command=self.import_from_outlook).pack(side="left",padx=7)
+        ttk.Button(actions,text="☁️ Outlook Microsoft",command=self.connect_outlook_graph).pack(side="left",padx=7)
         ttk.Button(actions,text="➕ Nouvelle écriture",command=lambda:self.edit_entry(None)).pack(side="left",padx=7)
         ttk.Button(actions,text="📤 Export CSV",command=self.export_csv).pack(side="left")
         cols=("id","kind","party","number","date","category","ht","vat","ttc","status")
@@ -256,6 +257,113 @@ class App(tk.Tk):
                 "Compta Canard ne peut pas accéder au profil Outlook classique.\n\n"
                 "Si vous utilisez le nouvel Outlook, cette connexion COM n'est pas disponible : "
                 "le nouvel Outlook utilise une intégration Microsoft Graph différente.\n\n" + str(e))
+
+    def get_graph_client_id(self):
+        with db() as c:
+            row = c.execute("SELECT value FROM settings WHERE key='graph_client_id'").fetchone()
+        return (row["value"].strip() if row and row["value"] else "")
+
+    def set_graph_client_id(self, client_id):
+        with db() as c:
+            c.execute("INSERT INTO settings(key,value) VALUES('graph_client_id',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (client_id.strip(),))
+
+    def configure_outlook_graph(self):
+        w=tk.Toplevel(self); w.title("Connexion Outlook Microsoft"); w.geometry("650x330"); w.transient(self)
+        tk.Label(w,text="Connexion au nouvel Outlook",font=("Segoe UI",16,"bold"),fg="#102b49").pack(anchor="w",padx=22,pady=(20,8))
+        tk.Label(w,text="Le nouvel Outlook utilise Microsoft Graph. Une application Microsoft Entra doit être créée une seule fois pour autoriser Compta Canard à lire les e-mails et leurs pièces jointes.",wraplength=600,justify="left").pack(anchor="w",padx=22)
+        tk.Label(w,text="ID d’application (client) :",font=("Segoe UI",10,"bold")).pack(anchor="w",padx=22,pady=(18,4))
+        v=tk.StringVar(value=self.get_graph_client_id())
+        ttk.Entry(w,textvariable=v,width=55).pack(anchor="w",padx=22)
+        def open_portal():
+            webbrowser.open("https://entra.microsoft.com/#view/Microsoft_AAD_RegisteredApps/ApplicationsListBlade")
+        ttk.Button(w,text="🌐 Ouvrir Microsoft Entra",command=open_portal).pack(anchor="w",padx=22,pady=10)
+        tk.Label(w,text="Après création de l’application, activez le flux appareil (public client) et ajoutez la permission déléguée Mail.Read.",fg="#66727e",wraplength=600,justify="left").pack(anchor="w",padx=22)
+        def save():
+            cid=v.get().strip()
+            if not cid:
+                messagebox.showerror("ID manquant","Renseignez l’ID d’application (client).",parent=w); return
+            self.set_graph_client_id(cid); w.destroy()
+            messagebox.showinfo("Configuration enregistrée","L’ID Microsoft est enregistré sur cet ordinateur. Vous pouvez maintenant tester la connexion Outlook Microsoft.")
+        ttk.Button(w,text="💾 Enregistrer",command=save).pack(anchor="e",padx=22,pady=14)
+
+    def graph_request(self, url, token):
+        req=urllib.request.Request(url,headers={"Authorization":"Bearer "+token,"Accept":"application/json","User-Agent":"ComptaCanard/2.2"})
+        with urllib.request.urlopen(req,timeout=30) as response:
+            return json.loads(response.read().decode("utf-8"))
+
+    def connect_outlook_graph(self):
+        client_id=self.get_graph_client_id()
+        if not client_id:
+            self.configure_outlook_graph(); return
+        try:
+            import msal
+        except ImportError:
+            messagebox.showerror("Module manquant","Le module Microsoft MSAL n'est pas installé dans Python.\n\nInstallez-le avec :\npy -m pip install msal"); return
+        try:
+            app=msal.PublicClientApplication(client_id,authority="https://login.microsoftonline.com/common")
+            flow=app.initiate_device_flow(scopes=["Mail.Read"])
+            if "user_code" not in flow: raise RuntimeError("Microsoft n'a pas fourni de code de connexion.")
+            messagebox.showinfo("Connexion Microsoft","Une fenêtre de navigateur va s'ouvrir. Connectez-vous avec votre compte Outlook/Hotmail, puis revenez dans Compta Canard.\n\nCode : "+flow["user_code"])
+            webbrowser.open(flow["verification_uri"])
+            result=app.acquire_token_by_device_flow(flow)
+            if "access_token" not in result: raise RuntimeError(result.get("error_description","Connexion Microsoft refusée."))
+            data=self.graph_request("https://graph.microsoft.com/v1.0/me?$select=displayName,mail,userPrincipalName",result["access_token"])
+            name=data.get("displayName") or data.get("mail") or data.get("userPrincipalName") or "Compte Microsoft"
+            messagebox.showinfo("Outlook Microsoft connecté","Connexion réussie à : "+name+"\n\nLa connexion au nouvel Outlook fonctionne.")
+        except Exception as e:
+            messagebox.showerror("Connexion Microsoft impossible","La connexion au nouvel Outlook n'a pas abouti.\n\n"+str(e))
+
+    def import_from_outlook_graph(self):
+        client_id=self.get_graph_client_id()
+        if not client_id:
+            self.configure_outlook_graph(); return
+        try:
+            import msal, base64
+        except ImportError:
+            messagebox.showerror("Module manquant","Le module Microsoft MSAL n'est pas installé dans Python.\n\nInstallez-le avec :\npy -m pip install msal"); return
+        try:
+            app=msal.PublicClientApplication(client_id,authority="https://login.microsoftonline.com/common")
+            flow=app.initiate_device_flow(scopes=["Mail.Read"])
+            if "user_code" not in flow: raise RuntimeError("Microsoft n'a pas fourni de code de connexion.")
+            messagebox.showinfo("Connexion Microsoft","Connectez-vous avec votre compte Outlook/Hotmail.\n\nCode : "+flow["user_code"])
+            webbrowser.open(flow["verification_uri"])
+            result=app.acquire_token_by_device_flow(flow)
+            if "access_token" not in result: raise RuntimeError(result.get("error_description","Connexion Microsoft refusée."))
+            cutoff=(datetime.now()-timedelta(days=365)).strftime("%Y-%m-%dT%H:%M:%SZ")
+            url="https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messages?$top=50&$select=id,subject,receivedDateTime,hasAttachments&$filter=receivedDateTime ge "+cutoff+" and hasAttachments eq true"
+            imported=duplicates=errors=0; known_hashes=set()
+            for existing in DOCS.iterdir():
+                if existing.is_file():
+                    try: known_hashes.add(hashlib.sha256(existing.read_bytes()).hexdigest())
+                    except OSError: pass
+            while url:
+                data=self.graph_request(url,result["access_token"])
+                for msg in data.get("value",[]):
+                    try:
+                        atts=self.graph_request("https://graph.microsoft.com/v1.0/me/messages/"+msg["id"]+"/attachments",result["access_token"])
+                        for att in atts.get("value",[]):
+                            if att.get("@odata.type")!="#microsoft.graph.fileAttachment": continue
+                            name=str(att.get("name") or "piece_jointe"); suffix=Path(name).suffix.lower()
+                            if suffix not in {".pdf",".png",".jpg",".jpeg",".webp"}: continue
+                            raw=att.get("contentBytes")
+                            if not raw: continue
+                            data_bytes=base64.b64decode(raw); digest=hashlib.sha256(data_bytes).hexdigest()
+                            if digest in known_hashes: duplicates+=1; continue
+                            safe=re.sub(r"[^A-Za-z0-9._-]+","_",Path(name).name).strip("._") or ("facture"+suffix)
+                            dest=DOCS/(datetime.now().strftime("%Y%m%d_%H%M%S_%f_")+safe); dest.write_bytes(data_bytes); known_hashes.add(digest)
+                            received=(msg.get("receivedDateTime") or "")[:10] or date.today().isoformat()
+                            with db() as c:
+                                c.execute("""INSERT INTO entries(kind,party,number,date,category,ht,rate,vat,ttc,status,notes,file,created)
+                                             VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                                          ("Achat","À renseigner",Path(name).stem,received,"Autres",0,20,0,0,"À contrôler",
+                                           "Pièce jointe récupérée depuis le nouvel Outlook via Microsoft Graph. Vérifier le fournisseur, la date et les montants.",
+                                           str(dest),datetime.now().isoformat()))
+                            imported+=1
+                    except Exception: errors+=1
+                url=data.get("@odata.nextLink")
+            messagebox.showinfo("Récupération Outlook Microsoft terminée",f"Factures/pièces jointes importées : {imported}\nDoublons ignorés : {duplicates}\nÉléments non récupérés : {errors}\n\nLes fichiers importés sont « À contrôler »."); self.invoices()
+        except Exception as e:
+            messagebox.showerror("Récupération Outlook Microsoft impossible","La récupération n'a pas abouti.\n\n"+str(e))
 
     def import_from_outlook(self):
         """Récupère les pièces jointes de facture depuis Outlook classique (profil déjà connecté)."""

@@ -1,0 +1,8 @@
+{
+  "app": "Compta Canard",
+  "version": "2.1.1",
+  "file": "Compta_Canard.py",
+  "download_url": "https://raw.githubusercontent.com/jeffoux40/compta-canard-updates/main/Compta_Canard.py",
+  "blob_sha1": "ae9100c86c25fc4462d25c9991bfff70ab33d1f7",
+  "notes": "Ajout du bouton de recherche de mises à jour avec sauvegarde préalable du programme et de la base comptable."
+}

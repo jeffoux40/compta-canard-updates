@@ -1,13 +1,17 @@
 # -*- coding: utf-8 -*-
 """Compta Canard - application locale. Les donnees restent dans %LOCALAPPDATA%."""
-import os, sqlite3, shutil, csv, sys, hashlib, re, json, urllib.request, subprocess
+import os, sqlite3, shutil, csv, sys, hashlib, re, json, urllib.request, subprocess, ssl
+try:
+    import certifi
+except ImportError:
+    certifi = None
 from pathlib import Path
 from datetime import date, datetime, timedelta
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 
 APP_NAME = "Compta Canard"
-VERSION = "2.1.1"
+VERSION = "2.1.2"
 BASE = Path(os.environ.get("LOCALAPPDATA", Path.home())) / "ComptaCanard"
 DB = BASE / "compta_canard.db"
 DOCS = BASE / "documents"
@@ -462,7 +466,8 @@ class App(tk.Tk):
         manifest_url = "https://raw.githubusercontent.com/jeffoux40/compta-canard-updates/main/manifest.json"
         try:
             request = urllib.request.Request(manifest_url, headers={"User-Agent": "ComptaCanard-Updater/1.0"})
-            with urllib.request.urlopen(request, timeout=15) as response:
+            ssl_context = ssl.create_default_context(cafile=certifi.where()) if certifi else ssl.create_default_context()
+            with urllib.request.urlopen(request, timeout=15, context=ssl_context) as response:
                 manifest = json.loads(response.read().decode("utf-8"))
             latest = str(manifest.get("version", "")).strip()
             current_parts = tuple(int(x) for x in VERSION.split("."))
@@ -482,7 +487,7 @@ class App(tk.Tk):
             if not download_url.startswith("https://raw.githubusercontent.com/jeffoux40/compta-canard-updates/main/"):
                 raise ValueError("Adresse de téléchargement non autorisée.")
             request = urllib.request.Request(download_url, headers={"User-Agent": "ComptaCanard-Updater/1.0"})
-            with urllib.request.urlopen(request, timeout=30) as response:
+            with urllib.request.urlopen(request, timeout=30, context=ssl_context) as response:
                 new_code = response.read()
             expected = str(manifest.get("blob_sha1", "")).lower()
             actual = hashlib.sha1(b"blob " + str(len(new_code)).encode("ascii") + b"\0" + new_code).hexdigest()

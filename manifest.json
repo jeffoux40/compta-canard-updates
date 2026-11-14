@@ -1,8 +1,8 @@
 {
   "app": "Compta Canard",
-  "version": "2.1.2",
+  "version": "2.1.3",
   "file": "Compta_Canard.py",
   "download_url": "https://raw.githubusercontent.com/jeffoux40/compta-canard-updates/main/Compta_Canard.py",
-  "blob_sha1": "5592684e97b1671de2b4873e981fd8742e0aa706",
-  "notes": "Ajout du bouton de recherche de mises à jour avec sauvegarde préalable du programme et de la base comptable."
+  "blob_sha1": "173ca960f1ca1b3b37a2601e7c9f02b0d561ff8c",
+  "notes": "Ajout de la connexion Outlook classique et d'un bouton de test de connexion, avec récupération des pièces jointes de factures."
 }

@@ -11,7 +11,7 @@ import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 
 APP_NAME = "Compta Canard"
-VERSION = "2.1.2"
+VERSION = "2.1.3"
 BASE = Path(os.environ.get("LOCALAPPDATA", Path.home())) / "ComptaCanard"
 DB = BASE / "compta_canard.db"
 DOCS = BASE / "documents"
@@ -204,6 +204,7 @@ class App(tk.Tk):
         self.clear(); self.heading("Factures","Importez vos PDF/images, puis vérifiez chaque facture")
         actions=tk.Frame(self.body,bg="#f4f6f8"); actions.pack(fill="x",padx=24)
         ttk.Button(actions,text="📥 Importer des factures",command=self.import_files).pack(side="left")
+        ttk.Button(actions,text="🔗 Connecter Outlook",command=self.connect_outlook).pack(side="left",padx=7)
         ttk.Button(actions,text="📨 Récupérer mes factures",command=self.import_from_outlook).pack(side="left",padx=7)
         ttk.Button(actions,text="➕ Nouvelle écriture",command=lambda:self.edit_entry(None)).pack(side="left",padx=7)
         ttk.Button(actions,text="📤 Export CSV",command=self.export_csv).pack(side="left")
@@ -221,6 +222,40 @@ class App(tk.Tk):
             sel=tree.selection()
             if sel: self.edit_entry(tree.item(sel[0])["values"][0])
         tree.bind("<Double-1>",open_selected)
+
+    def connect_outlook(self):
+        """Teste la connexion au profil Outlook classique sans modifier les e-mails."""
+        try:
+            import win32com.client
+        except ImportError:
+            messagebox.showerror("Outlook indisponible",
+                "Le module de connexion Outlook n'est pas installé dans Python (pywin32).")
+            return
+        try:
+            outlook = win32com.client.Dispatch("Outlook.Application")
+            namespace = outlook.GetNamespace("MAPI")
+            inbox = namespace.GetDefaultFolder(6)
+            profile = getattr(namespace, "CurrentProfileName", "") or "Profil Outlook"
+            account_names = []
+            try:
+                accounts = namespace.Accounts
+                for i in range(1, accounts.Count + 1):
+                    name = str(getattr(accounts.Item(i), "DisplayName", "") or "").strip()
+                    if name:
+                        account_names.append(name)
+            except Exception:
+                pass
+            details = f"Profil : {profile}\nBoîte de réception : {inbox.Name}"
+            if account_names:
+                details += "\nCompte(s) détecté(s) :\n• " + "\n• ".join(account_names)
+            messagebox.showinfo("Outlook connecté",
+                "La connexion à Outlook classique fonctionne.\n\n" + details +
+                "\n\nLe bouton « Récupérer mes factures » peut maintenant rechercher les pièces jointes.")
+        except Exception as e:
+            messagebox.showerror("Connexion Outlook impossible",
+                "Compta Canard ne peut pas accéder au profil Outlook classique.\n\n"
+                "Si vous utilisez le nouvel Outlook, cette connexion COM n'est pas disponible : "
+                "le nouvel Outlook utilise une intégration Microsoft Graph différente.\n\n" + str(e))
 
     def import_from_outlook(self):
         """Récupère les pièces jointes de facture depuis Outlook classique (profil déjà connecté)."""
